@@ -10,17 +10,38 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 from typing import Callable, Optional
 
-from crypto_engine import (
-    CompressionLevel,
-    CryptoError,
-    KdfType,
-    OperationResult,
-    decrypt_vault,
-    encrypt_folder,
-    inspect_vault,
-    scan_folder,
-    verify_vault,
-)
+_CRYPTO_IMPORT_ERROR: Optional[str] = None
+try:
+    from crypto_engine import (
+        CompressionLevel,
+        CryptoError,
+        KdfType,
+        OperationResult,
+        decrypt_vault,
+        encrypt_folder,
+        inspect_vault,
+        scan_folder,
+        verify_vault,
+    )
+    CRYPTO_AVAILABLE = True
+except ModuleNotFoundError as exc:
+    CRYPTO_AVAILABLE = False
+    _CRYPTO_IMPORT_ERROR = str(exc)
+
+    class CryptoError(Exception):
+        pass
+
+    class KdfType:
+        ARGON2ID = "argon2id"
+        PBKDF2_SHA256 = "pbkdf2_sha256"
+
+    class CompressionLevel:
+        BALANCED = 6
+        FAST = 1
+        MAXIMUM = 9
+        NONE = 0
+
+    OperationResult = object  # type: ignore[misc,assignment]
 from password_utils import evaluate_password, format_bytes, generate_strong_password
 from theme import PALETTES, LogConsole, PasswordStrengthBar, apply_ttk_theme
 from timestamp_utils import (
@@ -465,6 +486,9 @@ class FolderVaultApp:
         if not self.enc_output_var.get():
             self.enc_output_var.set(str(folder.with_suffix(".pfvault")))
 
+        if not CRYPTO_AVAILABLE:
+            self.enc_folder_info_var.set("Encryption requires 'cryptography' (pip install -r requirements.txt).")
+            return
         try:
             stats = scan_folder(folder)
             self.enc_folder_info_var.set(
@@ -499,6 +523,9 @@ class FolderVaultApp:
         if not self.dec_dest_var.get():
             self.dec_dest_var.set(str(vault.parent / f"{vault.stem}_decrypted"))
 
+        if not CRYPTO_AVAILABLE:
+            self.dec_inspector_var.set("Vault inspection requires 'cryptography' (pip install -r requirements.txt).")
+            return
         try:
             hdr = inspect_vault(vault)
             created = datetime.fromtimestamp(hdr.created_timestamp).strftime("%Y-%m-%d %H:%M:%S")
@@ -740,7 +767,22 @@ class FolderVaultApp:
     # ------------------------------------------------------------------
     # Actions
     # ------------------------------------------------------------------
+    def _require_crypto(self) -> bool:
+        if CRYPTO_AVAILABLE:
+            return True
+        msg = (
+            "The 'cryptography' package is required for folder encryption and decryption.\n\n"
+            "Install it with:\n    pip install cryptography\n\n"
+            "(The Spoof Timestamps tab works without any extra packages.)"
+        )
+        if _CRYPTO_IMPORT_ERROR:
+            msg += f"\n\nDetails: {_CRYPTO_IMPORT_ERROR}"
+        messagebox.showerror("Missing Dependency", msg)
+        return False
+
     def _start_encrypt(self) -> None:
+        if not self._require_crypto():
+            return
         folder_str = self.enc_folder_var.get().strip()
         output_str = self.enc_output_var.get().strip()
         password = self.enc_pw_var.get()
@@ -804,6 +846,8 @@ class FolderVaultApp:
         )
 
     def _start_decrypt(self) -> None:
+        if not self._require_crypto():
+            return
         vault_str = self.dec_vault_var.get().strip()
         dest_str = self.dec_dest_var.get().strip()
         password = self.dec_pw_var.get()
@@ -836,6 +880,8 @@ class FolderVaultApp:
         )
 
     def _start_verify(self) -> None:
+        if not self._require_crypto():
+            return
         vault_str = self.dec_vault_var.get().strip()
         password = self.dec_pw_var.get()
 
